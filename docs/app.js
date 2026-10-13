@@ -3,7 +3,7 @@
   'use strict';
 
   const L = window.Layout;
-  const APP_VERSION = 'v3';
+  const APP_VERSION = 'v4';
   let updatePending = false;
   const S = {
     screen: 'home',
@@ -17,7 +17,9 @@
     times: 3,
     pdf: null,
     from: 'home',
-    previewFrom: 'copy'
+    previewFrom: 'copy',
+    saveQ: Promise.resolve(),
+    last: null
   };
 
   /* ---------- utilidades ---------- */
@@ -132,6 +134,7 @@
   function back() {
     if ($('#crop')) { closeCrop(); return 'overlay'; }
     if ($('#modal').innerHTML) { closeModal(); return 'overlay'; }
+    if (S.screen === 'camera' && $('#qsheet')) { discardQuick(); return 'overlay'; }
     switch (S.screen) {
       case 'home': return false;
       case 'camera': S.guide && L.countMarks(S.guide) > 0 ? go('doc', false) : go('home', false); return true;
@@ -202,19 +205,57 @@
 
   /* ----- cámara ----- */
 
-  function camTitle() {
+  function camSection(slot) {
     const g = S.guide;
-    const slot = S.cam && S.cam.slot;
-    return '<b>Marca ' + (L.countMarks(g) + (slot && L.getSlot(g, slot) ? 0 : 1)) + ' de ' + g.target + '</b><span>' + esc(L.slotLabel(g, slot)) + '</span>';
+    if (!slot) return { title: '', sub: '' };
+    const isF = slot.page === 'F';
+    const cells = L.pageCellIds(g, slot.page);
+    const usable = isF ? L.FRENTE_USABLE : L.ANEXO_CELLS;
+    let filled = 0;
+    for (let i = isF ? 1 : 0; i < cells.length; i++) if (cells[i]) filled++;
+    const exists = !!L.getSlot(g, slot);
+    const sub = exists ? 'cuadro ' + (slot.idx + 1) + ' (repetir)' : 'marca ' + Math.min(usable, filled + 1) + ' de ' + usable;
+    return { title: L.pageTitle(g, slot.page), sub: sub + ' · total ' + Math.min(g.target, L.countMarks(g) + (exists ? 0 : 1)) + ' de ' + g.target };
   }
 
+  function stripPips(slot) {
+    const g = S.guide;
+    if (!slot) return '';
+    const isF = slot.page === 'F';
+    const n = isF ? L.FRENTE_CELLS : L.ANEXO_CELLS;
+    const cols = isF ? L.FRENTE.cols : L.ANEXO.cols;
+    const cells = L.pageCellIds(g, slot.page);
+    let h = '<div class="pips' + (isF ? ' fr' : '') + '" style="grid-template-columns:repeat(' + cols + ',minmax(0,1fr))" aria-hidden="true">';
+    for (let i = 0; i < n; i++) {
+      let cls = '';
+      if (i === slot.idx) cls = 'n'; else if (cells[i]) cls = 'f';
+      if (isF && i === 0) cls += ' res';
+      h += '<i class="' + cls + '"></i>';
+    }
+    return h + '</div>';
+  }
+
+  function camTopHTML(slot) {
+    const c = camSection(slot);
+    return '<button type="button" class="iconbtn" data-act="back" aria-label="Volver">' + ICON.back + '</button>' +
+      '<div class="mid"><b>' + esc(c.title) + '</b><span>' + esc(c.sub) + '</span></div>' + stripPips(slot);
+  }
+
+  function updateStrip() {
+    const el = $('#camtop');
+    if (el && S.cam) el.innerHTML = camTopHTML(S.cam.slot);
+  }
+
+  function autoOn() { try { return localStorage.getItem('marcas_auto') === '1'; } catch (e) { return false; } }
+
   function viewCamera() {
+    const slot = S.cam && S.cam.slot;
     return '<div class="camscreen">' +
-      '<div class="camtop"><button type="button" class="iconbtn" data-act="back" aria-label="Volver">' + ICON.back + '</button>' +
-      '<div class="mid">' + camTitle() + '</div><div style="width:48px"></div></div>' +
+      '<div class="camtop" id="camtop">' + camTopHTML(slot) + '</div>' +
       '<div class="viewfinder"><video id="vid" autoplay playsinline muted></video>' +
       '<div class="roi" id="roi"></div>' +
       '<div class="chips" id="chips"></div>' +
+      '<button type="button" class="autosw" id="autosw" role="switch" aria-checked="' + (autoOn() ? 'true' : 'false') + '" data-act="autoToggle"><span>Auto</span><i></i></button>' +
       '<div class="zoombar" id="zoombar" hidden></div>' +
       '<div class="camhint" id="camhint">Alejá el celular unos 15 cm. La marca no tiene que llenar el cuadro</div>' +
       '<div class="camerr" id="camerr" hidden></div></div>' +
@@ -381,7 +422,7 @@
 
   function qualityTick() {
     const v = $('#vid'), chips = $('#chips');
-    if (!v || !chips || !v.videoWidth || S.screen !== 'camera') return;
+    if (!v || !chips || !v.videoWidth || S.screen !== 'camera' || $('#qsheet')) return;
     try {
       const roi = roiFromView();
       const s = Math.min(1, 480 / Math.max(roi.w, roi.h));
@@ -417,7 +458,7 @@
       roi: { x: roi.x * s, y: roi.y * s, w: roi.w * s, h: roi.h * s },
       keepDots: false, slot: S.cam.slot, markId: null, editOnly: false, source: 'live'
     };
-    await beginReview(rev);
+    await beginQuick(rev);
   }
 
   async function fromFile(file) {
@@ -614,6 +655,186 @@
     }
   }
 
+  /* ----- flujo continuo: revisión rápida sobre la cámara ----- */
+
+  function enqueue(fn) {
+    S.saveQ = S.saveQ.then(fn).catch((e) => toast('No se pudo guardar: ' + (e && e.message ? e.message : e)));
+    return S.saveQ;
+  }
+
+  function qualityOk(q) { return !!q && !q.blur && !q.dark && !q.over && !q.lowContrast; }
+
+  async function beginQuick(rev) {
+    rev.quick = true;
+    S.rev = rev;
+    busy('Procesando la marca…');
+    await nextPaint();
+    try {
+      if (!rev.frameBlob) rev.frameBlob = await canvasToBlob(rev.frameCanvas, 'image/jpeg', 0.92);
+      await processReview();
+    } catch (e) { rev.result = { error: 'fail' }; }
+    unbusy();
+    if (autoOn() && rev.result && !rev.result.error && qualityOk(rev.result.quality)) {
+      commitQuick(true);
+      return;
+    }
+    openPanel();
+  }
+
+  async function reprocessQuick() {
+    busy('Procesando la marca…');
+    await nextPaint();
+    try { await processReview(); } catch (e) { S.rev.result = { error: 'fail' }; }
+    unbusy();
+    openPanel();
+  }
+
+  function panelHTML() {
+    const rev = S.rev, g = S.guide;
+    const r = rev.result || {};
+    const err = r.error;
+    let res;
+    if (err) {
+      const m = err === 'too_much' ? 'Se ve demasiado. Ajustá el recorte para que solo entre la marca.'
+        : err === 'no_mark' ? 'No se encontró la marca. Ajustá el recorte o repetí la foto.'
+          : 'No se pudo procesar la foto. Repetila.';
+      res = '<div class="err">' + m + '</div>';
+    } else res = previewSVG(r, g.penLevel);
+    let notes = '';
+    if (!err) {
+      const q = r.quality || {};
+      const list = [];
+      if (q.blur) list.push('Foto algo borrosa, conviene repetirla');
+      if (q.dark) list.push('Poca luz');
+      if (q.over) list.push('Demasiado brillo');
+      if (q.lowContrast) list.push('Poco contraste');
+      notes = list.length ? '<div class="qq warn">' + list.join(' · ') + '</div>' : '<div class="qq">✓ Foto nítida · Luz correcta</div>';
+    }
+    return '<div class="qsheet" id="qsheet" role="dialog" aria-label="Revisar la marca">' + notes +
+      '<div class="qpn"><div class="qb"><img alt="Foto recortada de la marca" src="' + rev.cropURL + '"></div>' +
+      '<div class="qb r" id="qres">' + res + '</div></div>' +
+      '<div class="qset" id="qset" hidden>' +
+      '<div class="ar"><label for="pen" class="lb">Grosor</label><input id="pen" class="range" data-act="pen" type="range" min="1" max="10" step="1" value="' + g.penLevel + '"><b id="penval">' + fmtPen(g.penLevel) + '</b></div>' +
+      '<div class="ar"><span id="lbl-dots" style="flex:1">Conservar punto suelto</span><button type="button" class="switch" role="switch" aria-checked="' + (rev.keepDots ? 'true' : 'false') + '" aria-labelledby="lbl-dots" data-act="qDots"><i></i></button></div>' +
+      '<button type="button" class="btn" data-act="qCrop" style="height:44px">Ajustar recorte</button>' +
+      '</div>' +
+      '<div class="okrow"><button type="button" class="btn" data-act="qRetake">Repetir</button>' +
+      '<button type="button" class="btn" data-act="qSet" aria-label="Ajustes" aria-expanded="false">Ajustes</button>' +
+      '<button type="button" class="btn primary" data-act="qAccept"' + (err ? ' disabled' : '') + '>Aceptar ✓</button></div>' +
+      '</div>';
+  }
+
+  function openPanel() {
+    closePanelDom();
+    const cam = $('.camscreen');
+    if (!cam) return;
+    const d = document.createElement('div');
+    d.innerHTML = panelHTML();
+    cam.appendChild(d.firstChild);
+    const vf = $('.viewfinder'); if (vf) vf.classList.add('dim');
+  }
+
+  function closePanelDom() {
+    const q = $('#qsheet'); if (q) q.remove();
+    const vf = $('.viewfinder'); if (vf) vf.classList.remove('dim');
+  }
+
+  function discardQuick() { S.rev = null; closePanelDom(); }
+
+  function showBanner(title, text) {
+    const cam = $('.camscreen');
+    if (!cam) return;
+    const old = $('#donebanner'); if (old) old.remove();
+    const b = document.createElement('div');
+    b.id = 'donebanner'; b.className = 'donebanner'; b.setAttribute('role', 'status');
+    b.innerHTML = '<span class="ck">✓</span><div><b>' + esc(title) + '</b><small>' + esc(text) + '</small></div>';
+    cam.appendChild(b);
+    setTimeout(() => { if (b.parentNode) b.remove(); }, 3800);
+  }
+
+  function showUndo(label) {
+    const cam = $('.camscreen');
+    if (!cam) return;
+    const old = $('#undobar'); if (old) old.remove();
+    const b = document.createElement('div');
+    b.id = 'undobar'; b.className = 'undobar';
+    b.innerHTML = '<span>' + esc(label) + '</span><button type="button" data-act="undoLast">Deshacer</button>';
+    cam.appendChild(b);
+    setTimeout(() => { if (b.parentNode) b.remove(); if (S.last && S.last.stamp === b.dataset.stamp) S.last = null; }, 6500);
+    b.dataset.stamp = String(S.last ? S.last.stamp : '');
+  }
+
+  // guarda la marca en el cuadro ya mismo (en pantalla) y escribe en el teléfono en segundo plano
+  function commitQuick(auto) {
+    const rev = S.rev, g = S.guide;
+    if (!rev || !rev.result || rev.result.error || !rev.slot) { openPanel(); return; }
+    const slot = rev.slot;
+    const id = L.uid('m');
+    const mark = {
+      id, guideId: g.id,
+      strokes: rev.result.strokes, w: rev.result.w, h: rev.result.h,
+      keepDots: rev.keepDots, roi: rev.roi,
+      frameW: rev.frameCanvas.width, frameH: rev.frameCanvas.height,
+      quality: rev.result.quality
+    };
+    const blob = rev.frameBlob;
+    const old = L.getSlot(g, slot);
+    L.setSlot(g, slot, id);
+    S.marks[id] = mark;
+    if (old && old !== id) delete S.marks[old];
+    S.pdf = null;
+    enqueue(async () => {
+      await DB.putFrame(id, blob);
+      await DB.putMark(mark);
+      if (old && old !== id) await DB.deleteMark(old);
+      await saveGuide();
+    });
+    S.last = { id, slot, old: null, stamp: Date.now() };
+    S.rev = null;
+    closePanelDom();
+
+    // ¿se completó la hoja o la guía?
+    const isF = slot.page === 'F';
+    const cells = L.pageCellIds(g, slot.page);
+    let full = true;
+    for (let i = isF ? 1 : 0; i < cells.length; i++) if (!cells[i]) { full = false; break; }
+    const total = L.countMarks(g);
+    const next = L.nextEmpty(g);
+    const doneAll = total >= g.target || !next;
+    const secName = L.pageTitle(g, slot.page);
+    if (doneAll) {
+      enqueue(async () => {});
+      toast(total >= g.target ? 'Listo: cargaste las ' + g.target + ' marcas' : 'No quedan cuadros libres. Agregá una hoja.');
+      go('doc');
+      return;
+    }
+    S.cam.slot = next;
+    updateStrip();
+    if (full) {
+      const usable = isF ? L.FRENTE_USABLE : L.ANEXO_CELLS;
+      showBanner(secName + ' listo', usable + ' de ' + usable + ' marcas cargadas. Pasamos al ' + L.pageTitle(g, next.page) + '.');
+    } else if (auto) {
+      showUndo('Marca guardada en ' + L.slotLabel(g, slot));
+    }
+  }
+
+  function undoLast() {
+    const last = S.last, g = S.guide;
+    if (!last || !g) return;
+    const cur = L.getSlot(g, last.slot);
+    if (cur !== last.id) { S.last = null; return; }
+    L.setSlot(g, last.slot, null);
+    delete S.marks[last.id];
+    S.pdf = null;
+    enqueue(async () => { await DB.deleteMark(last.id); await saveGuide(); });
+    S.cam.slot = last.slot;
+    S.last = null;
+    const u = $('#undobar'); if (u) u.remove();
+    const b = $('#donebanner'); if (b) b.remove();
+    updateStrip();
+    toast('Marca deshecha');
+  }
+
   /* ----- ajustar recorte ----- */
 
   function closeCrop() { const c = $('#crop'); if (c) c.remove(); }
@@ -692,12 +913,14 @@
       if (!b) return;
       if (b.dataset.c === 'cancel') {
         closeCrop();
-        if (fromFile) { S.rev = null; render(); }
+        if (fromFile) { S.rev = null; if (S.screen !== 'camera') render(); }
         return;
       }
       rev.roi = { x: r.x, y: r.y, w: r.w, h: r.h };
       closeCrop();
-      if (fromFile) await beginReview(rev); else await reprocess();
+      const onCam = S.screen === 'camera';
+      if (fromFile) await (onCam ? beginQuick(rev) : beginReview(rev));
+      else await (onCam ? reprocessQuick() : reprocess());
     });
   }
 
@@ -1026,7 +1249,11 @@
     clearTimeout(penTimer);
     penTimer = setTimeout(saveGuide, 400);
     const pv = $('#penval'); if (pv) pv.textContent = fmtPen(level);
-    if (S.screen === 'review') {
+    if (S.screen === 'camera') {
+      const r = S.rev && S.rev.result;
+      const box = $('#qres');
+      if (box && r && !r.error) box.innerHTML = previewSVG(r, level);
+    } else if (S.screen === 'review') {
       const r = S.rev && S.rev.result;
       const box = $('#resbox');
       if (box && r && !r.error) box.innerHTML = previewSVG(r, level);
@@ -1108,6 +1335,22 @@
     },
     pen(el) { onPen(parseInt(el.value, 10)); },
     bsize(el) { onBoxSize(parseInt(el.value, 10)); },
+    qAccept() { commitQuick(false); },
+    qRetake() { discardQuick(); },
+    qSet(el) {
+      const set = $('#qset'); if (!set) return;
+      set.hidden = !set.hidden;
+      el.setAttribute('aria-expanded', set.hidden ? 'false' : 'true');
+    },
+    qDots() { if (!S.rev) return; S.rev.keepDots = !S.rev.keepDots; reprocessQuick(); },
+    qCrop() { if (S.rev) openCrop(false); },
+    autoToggle(el) {
+      const on = !autoOn();
+      try { localStorage.setItem('marcas_auto', on ? '1' : '0'); } catch (e) { /* nada */ }
+      el.setAttribute('aria-checked', on ? 'true' : 'false');
+      toast(on ? 'Modo automático activado: acepta solo las fotos nítidas' : 'Modo automático apagado');
+    },
+    undoLast() { undoLast(); },
     zoomTo(el) { applyZoom(parseFloat(el.dataset.z)); },
     viewPDF() { S.previewFrom = S.screen; go('preview'); },
     dots() {
