@@ -12,12 +12,19 @@
   const FRENTE_CELLS = FRENTE.cols * FRENTE.rows; // 6
   const ANEXO_CELLS = ANEXO.cols * ANEXO.rows;     // 40
   const FRENTE_USABLE = FRENTE_CELLS - 1;          // 5 (el cuadro 1 queda libre)
-  const FILL = 0.74;                                // la marca ocupa 74% del cuadro
+  const FILL = 0.74;                                // (ya no se usa: el tamaño sale de la marca dominante)
+  // Tamaño de referencia: la tinta de la marca dominante del modelo mide 67,1 x 59,5 pt.
+  const REF_BOX = { w: 67.1, h: 59.5 };
+  const BOX_SCALE_MIN = 0.6, BOX_SCALE_MAX = 1.5, BOX_SCALE_DEFAULT = 1;
+  function boxScaleOf(guide) {
+    const v = guide && guide.boxScale;
+    return (typeof v === 'number' && v >= BOX_SCALE_MIN && v <= BOX_SCALE_MAX) ? v : BOX_SCALE_DEFAULT;
+  }
   const GRID_GRAY = '#999999';
 
   const PEN_MIN = 0.8, PEN_STEP = 0.35;            // grosor 1..10 -> 0.8 .. 3.95 pt
   function penFromLevel(level) { return PEN_MIN + (Math.round(level) - 1) * PEN_STEP; }
-  const DEFAULT_PEN_LEVEL = 5;                      // 2.2 pt
+  const DEFAULT_PEN_LEVEL = 6;                      // 2.55 pt (la dominante del modelo tiene 2.58 pt)
 
   function geom(kind) { return kind === 'F' ? FRENTE : ANEXO; }
 
@@ -30,9 +37,10 @@
   function f2(v) { return (Math.round(v * 100) / 100).toString(); }
 
   // Coloca una marca dentro de un cuadro: mismo tamaño máximo, sin deformar, centrada.
-  function placeMark(mark, rect, pen) {
-    const boxW = Math.max(1, rect.w * FILL - pen);
-    const boxH = Math.max(1, rect.h * FILL - pen);
+  function placeMark(mark, rect, pen, scale) {
+    const k = scale || BOX_SCALE_DEFAULT;
+    const boxW = Math.max(1, Math.min(REF_BOX.w * k, rect.w - 2) - pen);
+    const boxH = Math.max(1, Math.min(REF_BOX.h * k, rect.h - 2) - pen);
     const mw = mark.w, mh = mark.h;
     let s;
     if (mw < 1e-3 && mh < 1e-3) s = 0;
@@ -88,7 +96,7 @@
       const m = marks[id];
       if (!m) continue;
       const r = cellRect(kind, i);
-      const p = placeMark(m, r, pen);
+      const p = placeMark(m, r, pen, boxScaleOf(guide));
       if (p.d) marksSvg += '<path d="' + p.d + '"/>';
       for (const dt of p.dots) marksSvg += '<circle cx="' + f2(dt[0]) + '" cy="' + f2(dt[1]) + '" r="' + f2(pen / 2) + '" fill="#111" stroke="none"/>';
     }
@@ -120,6 +128,7 @@
       name: name,
       target: target,
       penLevel: DEFAULT_PEN_LEVEL,
+      boxScale: BOX_SCALE_DEFAULT,
       lines: true,
       frente: new Array(FRENTE_CELLS).fill(null),
       sheets: [],
@@ -205,6 +214,7 @@
 
   global.Layout = {
     PAGE, FRENTE, ANEXO, FRENTE_CELLS, ANEXO_CELLS, FRENTE_USABLE, FILL, GRID_GRAY,
+    REF_BOX, BOX_SCALE_MIN, BOX_SCALE_MAX, BOX_SCALE_DEFAULT, boxScaleOf,
     penFromLevel, DEFAULT_PEN_LEVEL, cellRect, placeMark, pageSVG, pageCellIds, pageKind,
     uid, sheetsNeeded, newGuide, pageIds, pageTitle, countMarks, capacity, nextEmpty,
     slotLabel, setSlot, getSlot, allMarkIds, copyPages, planCounts

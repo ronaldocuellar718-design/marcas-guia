@@ -40,7 +40,7 @@
         const id = cells[i];
         if (!id || !marks[id]) continue;
         const r = L.cellRect(kind, i);
-        const p = L.placeMark(marks[id], r, pen);
+        const p = L.placeMark(marks[id], r, pen, L.boxScaleOf(guide));
         if (p.d) {
           page.drawSvgPath(p.d, {
             x: 0, y: L.PAGE.h,

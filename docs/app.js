@@ -14,7 +14,8 @@
     sel: [],
     times: 3,
     pdf: null,
-    from: 'home'
+    from: 'home',
+    previewFrom: 'copy'
   };
 
   /* ---------- utilidades ---------- */
@@ -43,7 +44,7 @@
     t.textContent = msg;
     t.classList.add('show');
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => t.classList.remove('show'), 3200);
+    toastTimer = setTimeout(() => t.classList.remove('show'), 2300);
   }
   function busy(msg) { $('#busytxt').textContent = msg || 'Procesando…'; $('#busy').hidden = false; }
   function unbusy() { $('#busy').hidden = true; }
@@ -135,6 +136,7 @@
       case 'review': S.rev && S.rev.editOnly ? go('doc', false) : go('camera', false); return true;
       case 'doc': go('home', false); return true;
       case 'copy': case 'export': go('doc', false); return true;
+      case 'preview': go(S.previewFrom || 'copy', false); return true;
       default: go('home', false); return true;
     }
   }
@@ -156,10 +158,11 @@
       case 'doc': html = viewDoc(); break;
       case 'copy': html = viewCopy(); break;
       case 'export': html = viewExport(); break;
+      case 'preview': html = viewPreview(); break;
       default: html = viewHome();
     }
     app.innerHTML = html;
-    if (S.screen === 'camera') startCamera();
+    if (S.screen === 'camera') { startCamera(); bindPinch(); }
   }
 
   function guideProgress(g) { return L.countMarks(g); }
@@ -208,7 +211,8 @@
       '<div class="viewfinder"><video id="vid" autoplay playsinline muted></video>' +
       '<div class="roi" id="roi"></div>' +
       '<div class="chips" id="chips"></div>' +
-      '<div class="camhint" id="camhint">Encuadrá la marca dentro del cuadro verde</div>' +
+      '<div class="zoombar" id="zoombar" hidden></div>' +
+      '<div class="camhint" id="camhint">Alejá el celular unos 15 cm. La marca no tiene que llenar el cuadro</div>' +
       '<div class="camerr" id="camerr" hidden></div></div>' +
       '<div class="camctl">' +
       '<button type="button" class="sm" id="torchbtn" data-act="torch" aria-label="Linterna" hidden>' + ICON.flash + '</button>' +
@@ -262,6 +266,7 @@
         if (caps.focusMode && caps.focusMode.indexOf('continuous') >= 0) await track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] });
       } catch (e) { /* nada */ }
       if (caps.torch) { S.cam.torch = true; const tb = $('#torchbtn'); if (tb) tb.hidden = false; }
+      setupZoom(track, caps);
       S.cam.timer = setInterval(qualityTick, 800);
     } catch (err) {
       const name = err && err.name;
@@ -273,6 +278,80 @@
         camFail('No se pudo abrir la cámara. Elegí una foto con los botones de abajo.');
       }
     }
+  }
+
+
+  /* ----- zoom (botones y pellizco) ----- */
+
+  const ZOOM_STEPS = [0.6, 1, 2, 2.5, 5];
+
+  function fmtZoom(z) { return String(Math.round(z * 10) / 10).replace('.', ',') + '×'; }
+
+  function setupZoom(track, caps) {
+    const c = S.cam;
+    c.track = track; c.zoomMin = 1; c.zoomMax = 1; c.zoom = 1;
+    const zc = caps && caps.zoom;
+    if (!zc || typeof zc.max !== 'number' || zc.max <= zc.min + 0.05) return; // el teléfono no deja usar zoom desde el navegador
+    c.zoomMin = zc.min; c.zoomMax = zc.max;
+    const steps = ZOOM_STEPS.filter((z) => z >= zc.min - 0.01 && z <= zc.max + 0.01);
+    if (steps.indexOf(1) < 0 && zc.min <= 1 && zc.max >= 1) steps.push(1);
+    steps.sort((a, b) => a - b);
+    c.steps = steps;
+    let start = 1;
+    try { const saved = parseFloat(localStorage.getItem('marcas_zoom')); if (saved >= zc.min && saved <= zc.max) start = saved; } catch (e) { /* nada */ }
+    applyZoom(start, true);
+  }
+
+  async function applyZoom(z, silent) {
+    const c = S.cam;
+    if (!c || !c.track) return;
+    z = Math.min(c.zoomMax, Math.max(c.zoomMin, z));
+    try {
+      await c.track.applyConstraints({ advanced: [{ zoom: z }] });
+      c.zoom = z;
+      try { localStorage.setItem('marcas_zoom', String(z)); } catch (e) { /* nada */ }
+    } catch (e) { if (!silent) toast('Este teléfono no permite ese zoom'); }
+    renderZoomBar();
+  }
+
+  function renderZoomBar() {
+    const bar = $('#zoombar'), c = S.cam;
+    if (!bar || !c || !c.steps || c.steps.length < 2) { if (bar) bar.hidden = true; return; }
+    bar.hidden = false;
+    let active = c.steps[0], best = Infinity;
+    for (const z of c.steps) { const d = Math.abs(z - c.zoom); if (d < best) { best = d; active = z; } }
+    const custom = best > 0.15;
+    bar.innerHTML = c.steps.map((z) => {
+      const on = !custom && z === active;
+      return '<button type="button" class="zb' + (on ? ' on' : '') + '" data-act="zoomTo" data-z="' + z + '" aria-pressed="' + on + '">' + (on ? fmtZoom(z) : String(z).replace('.', ',')) + '</button>';
+    }).join('') + (custom ? '<span class="zcur">' + fmtZoom(c.zoom) + '</span>' : '');
+  }
+
+  // pellizco con dos dedos sobre el visor
+  function bindPinch() {
+    const vf = $('.viewfinder');
+    if (!vf) return;
+    const pts = new Map();
+    let start = null;
+    vf.addEventListener('pointerdown', (e) => { pts.set(e.pointerId, [e.clientX, e.clientY]); if (pts.size === 2) start = { d: pinchDist(pts), z: S.cam ? S.cam.zoom : 1 }; });
+    vf.addEventListener('pointermove', (e) => {
+      if (!pts.has(e.pointerId)) return;
+      pts.set(e.pointerId, [e.clientX, e.clientY]);
+      const c = S.cam;
+      if (pts.size === 2 && start && c && c.steps) {
+        const z = start.z * (pinchDist(pts) / Math.max(1, start.d));
+        const now = Date.now();
+        if (!c.lastZ || now - c.lastZ > 90) { c.lastZ = now; applyZoom(z, true); }
+      }
+    });
+    const end = (e) => { pts.delete(e.pointerId); if (pts.size < 2) start = null; };
+    vf.addEventListener('pointerup', end);
+    vf.addEventListener('pointercancel', end);
+    vf.style.touchAction = 'none';
+  }
+  function pinchDist(pts) {
+    const a = Array.from(pts.values());
+    return Math.hypot(a[0][0] - a[1][0], a[0][1] - a[1][1]);
   }
 
   function roiFromView() {
@@ -397,28 +476,42 @@
   }
 
   function previewSVG(result, penLevel) {
-    const W = L.ANEXO.cw, H = L.ANEXO.ch;
+    const k = L.boxScaleOf(S.guide);
+    const W = L.REF_BOX.w * k + 16, H = L.REF_BOX.h * k + 16;
     const pen = L.penFromLevel(penLevel);
-    const p = L.placeMark(result, { x: 0, y: 0, w: W, h: H }, pen);
+    const p = L.placeMark(result, { x: 0, y: 0, w: W, h: H }, pen, k);
     let s = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Marca con trazo uniforme">' +
       '<g fill="none" stroke="#111" stroke-width="' + pen + '" stroke-linecap="round" stroke-linejoin="round"><path d="' + p.d + '"/></g>';
     for (const d of p.dots) s += '<circle cx="' + d[0] + '" cy="' + d[1] + '" r="' + (pen / 2) + '" fill="#111"/>';
     return s + '</svg>';
   }
 
-  function miniGrid(slot) {
+  function fmtPen(level) { return String(Math.round(L.penFromLevel(level) * 100) / 100).replace('.', ',') + ' pt'; }
+
+  function locCard(slot, editing) {
     const g = S.guide;
-    const kind = slot.page === 'F' ? 'F' : 'A';
-    const n = kind === 'F' ? L.FRENTE_CELLS : L.ANEXO_CELLS;
-    const cols = kind === 'F' ? L.FRENTE.cols : L.ANEXO.cols;
+    const isF = slot.page === 'F';
+    const n = isF ? L.FRENTE_CELLS : L.ANEXO_CELLS;
+    const cols = isF ? L.FRENTE.cols : L.ANEXO.cols;
     const cells = L.pageCellIds(g, slot.page);
-    let h = '<div class="mini ' + (kind === 'F' ? 'fr' : '') + '" style="grid-template-columns:repeat(' + cols + ',minmax(0,1fr))" aria-hidden="true">';
+    let grid = '<div class="lgrid' + (isF ? ' fr' : '') + '" style="grid-template-columns:repeat(' + cols + ',minmax(0,1fr))" aria-hidden="true">';
     for (let i = 0; i < n; i++) {
       let cls = '';
       if (i === slot.idx) cls = 'n'; else if (cells[i]) cls = 'f';
-      h += '<i class="' + cls + '"></i>';
+      if (isF && i === 0) cls += ' res';
+      grid += '<i class="' + cls + '"></i>';
     }
-    return h + '</div>';
+    grid += '</div>';
+    const total = L.countMarks(g);
+    const left = Math.max(0, g.target - total - (editing ? 0 : 1));
+    const pct = Math.min(100, Math.round((total + (editing ? 0 : 1)) * 100 / Math.max(1, g.target)));
+    return '<div class="loc">' + grid +
+      '<div class="linfo"><div><div class="t1">' + (editing ? 'Está en' : 'Se ubicará en') + '</div>' +
+      '<div class="t2">' + esc(L.pageTitle(g, slot.page)) + '</div>' +
+      '<div class="t3">cuadro ' + (slot.idx + 1) + ' de ' + n + '</div></div>' +
+      '<div><div class="t3">' + (editing ? total : total + 1) + ' de ' + g.target + ' · quedan ' + left + '</div>' +
+      '<div class="bar" aria-hidden="true"><i style="width:' + pct + '%"></i></div>' +
+      '<div class="leg"><span><s class="u"></s>usado</span><span><s class="c"></s>este</span><span><s class="l"></s>libre</span></div></div></div></div>';
   }
 
   function viewReview() {
@@ -437,7 +530,8 @@
     const slot = rev.slot;
     const num = rev.markId ? null : (L.countMarks(g) + 1);
     const title = rev.markId ? 'Revisar marca' : 'Revisar marca ' + num + ' de ' + g.target;
-    return '<main class="screen">' +
+    return '<main class="screen rv">' +
+      '<div class="rvbody">' +
       '<div class="hdr"><button type="button" class="iconbtn" data-act="back" aria-label="Volver">' + ICON.back + '</button>' +
       '<div class="ttl"><h1>' + title + '</h1></div></div>' +
       '<div class="panels">' +
@@ -445,17 +539,20 @@
       '<div class="panel res"><span class="label">Resultado</span><div class="box" id="resbox">' + resBox + '</div></div>' +
       '</div>' +
       (err ? '' : qualityNotes(r.quality)) +
-      '<div class="card" style="gap:6px;padding:14px 16px">' +
-      '<div class="top"><label for="pen" style="font-size:16px;font-weight:600">Grosor del trazo</label><span class="small">igual en todas las marcas</span></div>' +
-      '<input id="pen" class="range" data-act="pen" type="range" min="1" max="10" step="1" value="' + level + '">' +
-      '<div class="rangelbl"><span>Fino</span><span>Grueso</span></div></div>' +
-      '<div class="switchrow"><span id="lbl-dots">Conservar punto suelto</span>' +
+      '<div class="adj">' +
+      '<div class="ar"><label for="pen" class="lb">Grosor</label>' +
+      '<input id="pen" class="range" data-act="pen" type="range" min="1" max="10" step="1" value="' + level + '" aria-describedby="penval">' +
+      '<b id="penval">' + fmtPen(level) + '</b></div>' +
+      '<div class="ar"><span id="lbl-dots" style="flex:1">Conservar punto suelto</span>' +
       '<button type="button" class="switch" role="switch" aria-checked="' + (rev.keepDots ? 'true' : 'false') + '" aria-labelledby="lbl-dots" data-act="dots"><i></i></button></div>' +
-      (slot ? '<div class="where">' + miniGrid(slot) + '<div><div class="t1">Se ubicará en</div><div class="t2">' + esc(L.slotLabel(g, slot)) + '</div></div></div>' : '') +
-      '<div class="spacer"></div>' +
+      '</div>' +
+      (slot ? locCard(slot, !!rev.editOnly) : '') +
+      '</div>' +
+      '<div class="rvfoot">' +
       '<button type="button" class="btn primary" data-act="accept"' + (err ? ' disabled' : '') + '>' + (rev.editOnly ? 'Guardar cambios' : 'Aceptar y sacar la siguiente') + '</button>' +
       '<div class="row"><button type="button" class="btn" data-act="retake">Repetir foto</button>' +
       '<button type="button" class="btn" data-act="crop">Ajustar recorte</button></div>' +
+      '</div>' +
       '</main>';
   }
 
@@ -770,10 +867,35 @@
       '<div class="num"><b id="timesnum">' + S.times + '</b><span>' + (S.times === 1 ? 'vez' : 'veces') + '</span></div>' +
       '<button type="button" class="rb" data-act="timesPlus" aria-label="Más">' + ICON.plus + '</button></div>' +
       '<div style="text-align:center;font-size:16px" id="copysum">' + summary + '</div></div>' +
-      '<div class="spacer"></div>' +
       '<button type="button" class="btn primary" data-act="doCopy"' + (S.sel.length ? '' : ' disabled') + '>Copiar hojas</button>' +
-      '<div class="row"><button type="button" class="btn" data-act="goExport">' + ICON.pdf + 'Ir a exportar</button>' +
-      (copied ? '<button type="button" class="btn" data-act="resetCopies">Deshacer copias</button>' : '') + '</div>' +
+      '<div class="label" style="margin-top:6px">Así queda el PDF · ' + total + (total === 1 ? ' hoja' : ' hojas') + '</div>' +
+      '<div class="planthumbs" id="planthumbs">' + planThumbs(g) + '</div>' +
+      '<div class="row"><button type="button" class="btn" data-act="viewPDF">Ver el PDF</button>' +
+      '<button type="button" class="btn" data-act="goExport">' + ICON.pdf + 'Ir a exportar</button></div>' +
+      (copied ? '<button type="button" class="btn flat" data-act="resetCopies">Deshacer copias</button>' : '') +
+      '</main>';
+  }
+
+  function planThumbs(g) {
+    return g.plan.map((id, i) =>
+      '<div class="pt"><div class="pg">' + L.pageSVG(g, id, S.marks, { lines: g.lines }) + '</div>' +
+      '<span class="nm">Hoja ' + (i + 1) + '</span><span class="nm2">' + esc(L.pageTitle(g, id)) + '</span></div>'
+    ).join('');
+  }
+
+  function viewPreview() {
+    const g = S.guide;
+    if (!g) return viewHome();
+    const total = g.plan.length;
+    const pages = g.plan.map((id, i) =>
+      '<div class="pvh">Hoja ' + (i + 1) + ' de ' + total + ' · ' + esc(L.pageTitle(g, id)) + '</div>' +
+      '<div class="pvpage">' + L.pageSVG(g, id, S.marks, { lines: g.lines, label: 'Hoja ' + (i + 1) + ' de ' + total }) + '</div>'
+    ).join('');
+    return '<main class="screen pv">' +
+      '<div class="hdr"><button type="button" class="iconbtn" data-act="back" aria-label="Volver">' + ICON.back + '</button>' +
+      '<div class="ttl"><h1>Vista del PDF</h1><span class="sub">' + total + (total === 1 ? ' hoja' : ' hojas') + ' · ' + (g.lines ? 'Con líneas' : 'Solo marcas') + '</span></div></div>' +
+      '<div class="pvlist">' + pages + '</div>' +
+      '<button type="button" class="btn primary" data-act="goExport">' + ICON.pdf + 'Exportar PDF</button>' +
       '</main>';
   }
 
@@ -789,6 +911,12 @@
   }
 
   /* ----- exportar ----- */
+
+  function fmtBox(g) {
+    const k = L.boxScaleOf(g);
+    const f = (v) => String(Math.round(v * 10) / 10).replace('.', ',');
+    return f(L.REF_BOX.w * k) + ' × ' + f(L.REF_BOX.h * k) + ' pt';
+  }
 
   function viewExport() {
     const g = S.guide;
@@ -813,10 +941,11 @@
       '<div style="display:flex;flex-direction:column;gap:8px"><span style="font-size:16px;font-weight:600">Líneas de los cuadritos</span>' +
       '<div class="seg"><button type="button" data-act="linesOn" aria-pressed="' + (g.lines ? 'true' : 'false') + '">Con líneas</button>' +
       '<button type="button" data-act="linesOff" aria-pressed="' + (g.lines ? 'false' : 'true') + '">Solo marcas</button></div></div>' +
-      '<div class="card" style="gap:6px;padding:14px 16px">' +
-      '<div class="top"><label for="pen" style="font-size:16px;font-weight:600">Grosor del trazo</label><span class="small">igual en todas</span></div>' +
-      '<input id="pen" class="range" data-act="pen" type="range" min="1" max="10" step="1" value="' + g.penLevel + '">' +
-      '<div class="rangelbl"><span>Fino</span><span>Grueso</span></div></div>' +
+      '<div class="adj">' +
+      '<div class="ar"><label for="pen" class="lb">Grosor</label><input id="pen" class="range" data-act="pen" type="range" min="1" max="10" step="1" value="' + g.penLevel + '"><b id="penval">' + fmtPen(g.penLevel) + '</b></div>' +
+      '<div class="ar"><label for="bsz" class="lb">Tamaño de las marcas</label><input id="bsz" class="range" data-act="bsize" type="range" min="' + Math.round(L.BOX_SCALE_MIN * 100) + '" max="' + Math.round(L.BOX_SCALE_MAX * 100) + '" step="5" value="' + Math.round(L.boxScaleOf(g) * 100) + '"><b id="bszval">' + fmtBox(g) + '</b></div>' +
+      '</div>' +
+      '<button type="button" class="btn" data-act="viewPDF">Ver el PDF completo</button>' +
       pdf +
       '<div class="spacer"></div>' +
       '<button type="button" class="btn primary" data-act="genPDF">' + (S.pdf ? 'Generar de nuevo' : 'Generar PDF') + '</button>' +
@@ -881,20 +1010,33 @@
   /* ---------- eventos ---------- */
 
   let penTimer = null;
+  function refreshExportThumbs() {
+    const g = S.guide;
+    const t = $('#expthumbs');
+    if (t) t.innerHTML = L.pageIds(g).map((id) => '<div class="thumb"><div class="pg">' + L.pageSVG(g, id, S.marks, { lines: g.lines }) + '</div><span class="nm">' + L.pageTitle(g, id) + '</span></div>').join('');
+    if (S.pdf) { S.pdf = null; const ok = $('.pdfok'); if (ok) ok.remove(); }
+  }
   function onPen(level) {
     const g = S.guide;
     g.penLevel = level;
     clearTimeout(penTimer);
     penTimer = setTimeout(saveGuide, 400);
+    const pv = $('#penval'); if (pv) pv.textContent = fmtPen(level);
     if (S.screen === 'review') {
       const r = S.rev && S.rev.result;
       const box = $('#resbox');
       if (box && r && !r.error) box.innerHTML = previewSVG(r, level);
     } else if (S.screen === 'export') {
-      const t = $('#expthumbs');
-      if (t) t.innerHTML = L.pageIds(g).map((id) => '<div class="thumb"><div class="pg">' + L.pageSVG(g, id, S.marks, { lines: g.lines }) + '</div><span class="nm">' + L.pageTitle(g, id) + '</span></div>').join('');
-      if (S.pdf) { S.pdf = null; const ok = $('.pdfok'); if (ok) ok.remove(); }
+      refreshExportThumbs();
     }
+  }
+  function onBoxSize(pct) {
+    const g = S.guide;
+    g.boxScale = Math.min(L.BOX_SCALE_MAX, Math.max(L.BOX_SCALE_MIN, pct / 100));
+    clearTimeout(penTimer);
+    penTimer = setTimeout(saveGuide, 400);
+    const bv = $('#bszval'); if (bv) bv.textContent = fmtBox(g);
+    if (S.screen === 'export') refreshExportThumbs();
   }
 
   const actions = {
@@ -961,6 +1103,9 @@
       go('camera');
     },
     pen(el) { onPen(parseInt(el.value, 10)); },
+    bsize(el) { onBoxSize(parseInt(el.value, 10)); },
+    zoomTo(el) { applyZoom(parseFloat(el.dataset.z)); },
+    viewPDF() { S.previewFrom = S.screen; go('preview'); },
     dots() {
       S.rev.keepDots = !S.rev.keepDots;
       reprocess();
@@ -1020,12 +1165,13 @@
     const el = e.target.closest && e.target.closest('[data-act]');
     if (!el) return;
     const fn = actions[el.dataset.act];
-    if (fn && el.dataset.act !== 'pen') fn(el, e);
+    if (fn && el.dataset.act !== 'pen' && el.dataset.act !== 'bsize') fn(el, e);
   });
 
   document.addEventListener('input', (e) => {
     const el = e.target;
     if (el && el.dataset && el.dataset.act === 'pen') actions.pen(el);
+    if (el && el.dataset && el.dataset.act === 'bsize') actions.bsize(el);
   });
 
   document.addEventListener('change', (e) => {
