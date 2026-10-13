@@ -224,3 +224,5 @@ h1, h2 { margin: 0; }
 .pvpage { border: 1px solid #B5AFA0; background: #fff; line-height: 0; content-visibility: auto; contain-intrinsic-size: 1000px 620px; }
 .pvpage svg { width: 100%; height: auto; display: block; }
 .screen.pv .btn.primary { position: sticky; bottom: calc(10px + var(--sab)); }
+
+.ver { text-align: center; font-size: 13px; color: var(--muted); padding-top: 4px; }

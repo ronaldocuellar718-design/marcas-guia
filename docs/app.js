@@ -3,6 +3,8 @@
   'use strict';
 
   const L = window.Layout;
+  const APP_VERSION = 'v3';
+  let updatePending = false;
   const S = {
     screen: 'home',
     guides: [],
@@ -161,6 +163,7 @@
       case 'preview': html = viewPreview(); break;
       default: html = viewHome();
     }
+    if (S.screen === 'home' && updatePending) { location.reload(); return; }
     app.innerHTML = html;
     if (S.screen === 'camera') { startCamera(); bindPinch(); }
   }
@@ -193,6 +196,7 @@
       '<div class="label">En proceso</div>' + list +
       '<div class="spacer"></div>' +
       '<button type="button" class="btn primary big" data-act="newGuide">' + ICON.camera + 'Nueva guía</button>' +
+      '<div class="ver">Versión ' + APP_VERSION + '</div>' +
       '</main>';
   }
 
@@ -1214,7 +1218,16 @@
       });
     }
     if ('serviceWorker' in navigator && !isNative() && /^https?:$/.test(location.protocol)) {
-      navigator.serviceWorker.register('sw.js').catch(() => {});
+      const hadController = !!navigator.serviceWorker.controller;
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (!hadController) return; // primera instalación: no hace falta recargar
+        if (S.screen === 'home') location.reload();
+        else { updatePending = true; toast('Hay una versión nueva. Se aplica al volver al inicio'); }
+      });
+      navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then((reg) => {
+        reg.update().catch(() => {});
+        document.addEventListener('visibilitychange', () => { if (!document.hidden) reg.update().catch(() => {}); });
+      }).catch(() => {});
     }
   }
 

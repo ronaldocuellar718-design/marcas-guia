@@ -1,5 +1,5 @@
 /* Marcas para guía - funciona sin internet una vez abierta la primera vez */
-const CACHE = 'marcas-guia-v2';
+const CACHE = 'marcas-guia-v3';
 const FILES = [
   './', './index.html', './styles.css', './app.js', './engine.js', './layout.js', './db.js', './pdfexport.js',
   './lib/pdf-lib.min.js', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png',
@@ -8,7 +8,7 @@ const FILES = [
 ];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(FILES)).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(CACHE).then((c) => Promise.all(FILES.map((f) => c.add(new Request(f, { cache: 'reload' })).catch(() => {})))).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (e) => {
@@ -23,7 +23,7 @@ self.addEventListener('fetch', (e) => {
   const req = e.request;
   if (req.method !== 'GET' || new URL(req.url).origin !== location.origin) return;
   e.respondWith(
-    fetch(req).then((res) => {
+    fetch(req, { cache: 'no-cache' }).then((res) => {
       if (res && res.ok) { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(req, copy)); }
       return res;
     }).catch(() => caches.match(req, { ignoreSearch: true }).then((r) => r || caches.match('./index.html')))
