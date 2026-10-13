@@ -1,0 +1,9 @@
+{
+  "appId": "com.grupopiveta.marcasguia",
+  "appName": "Marcas para guía",
+  "webDir": "docs",
+  "backgroundColor": "#F3F0E8",
+  "android": {
+    "allowMixedContent": false
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "name": "marcas-guia",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Marcas para guía - app para cargar marcas con la cámara y generar el PDF",
+  "scripts": {
+    "sync": "cap sync android"
+  },
+  "dependencies": {
+    "@capacitor/android": "^6.1.2",
+    "@capacitor/app": "^6.0.1",
+    "@capacitor/cli": "^6.1.2",
+    "@capacitor/core": "^6.1.2",
+    "@capacitor/filesystem": "^6.0.1",
+    "@capacitor/share": "^6.0.2"
+  }
+}
