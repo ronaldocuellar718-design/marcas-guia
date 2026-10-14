@@ -3,7 +3,10 @@
   'use strict';
 
   const L = window.Layout;
-  const APP_VERSION = 'v4';
+  const APP_VERSION = 'v5';
+  const FRAME_MAX = 1600;        // lado mayor de la foto de trabajo (ahorra memoria)
+  const RESTART_EVERY = 50;      // fotos seguidas antes de reiniciar la cámara solo
+  function freeCanvas(c) { if (c) { try { c.width = 0; c.height = 0; } catch (e) { /* nada */ } } }
   let updatePending = false;
   const S = {
     screen: 'home',
@@ -207,43 +210,47 @@
 
   function camSection(slot) {
     const g = S.guide;
-    if (!slot) return { title: '', sub: '' };
+    if (!slot) return { title: '', sub: '', k: 0, usable: 0 };
     const isF = slot.page === 'F';
     const cells = L.pageCellIds(g, slot.page);
     const usable = isF ? L.FRENTE_USABLE : L.ANEXO_CELLS;
     let filled = 0;
     for (let i = isF ? 1 : 0; i < cells.length; i++) if (cells[i]) filled++;
     const exists = !!L.getSlot(g, slot);
-    const sub = exists ? 'cuadro ' + (slot.idx + 1) + ' (repetir)' : 'marca ' + Math.min(usable, filled + 1) + ' de ' + usable;
-    return { title: L.pageTitle(g, slot.page), sub: sub + ' · total ' + Math.min(g.target, L.countMarks(g) + (exists ? 0 : 1)) + ' de ' + g.target };
+    const k = exists ? (isF ? slot.idx : slot.idx + 1) : Math.min(usable, filled + 1);
+    const sub = (exists ? 'repetir cuadro ' + k : 'marca ' + k + ' de ' + usable) + ' · total ' + Math.min(g.target, L.countMarks(g) + (exists ? 0 : 1)) + ' de ' + g.target;
+    return { title: L.pageTitle(g, slot.page), sub: sub, k: k, usable: usable };
   }
 
-  function stripPips(slot) {
+  function bandHTML(slot) {
     const g = S.guide;
     if (!slot) return '';
     const isF = slot.page === 'F';
     const n = isF ? L.FRENTE_CELLS : L.ANEXO_CELLS;
     const cols = isF ? L.FRENTE.cols : L.ANEXO.cols;
     const cells = L.pageCellIds(g, slot.page);
-    let h = '<div class="pips' + (isF ? ' fr' : '') + '" style="grid-template-columns:repeat(' + cols + ',minmax(0,1fr))" aria-hidden="true">';
+    const c = camSection(slot);
+    let h = '<div class="g' + (isF ? ' fr' : '') + '" style="grid-template-columns:repeat(' + cols + ',minmax(0,1fr))" aria-hidden="true">';
     for (let i = 0; i < n; i++) {
       let cls = '';
       if (i === slot.idx) cls = 'n'; else if (cells[i]) cls = 'f';
       if (isF && i === 0) cls += ' res';
       h += '<i class="' + cls + '"></i>';
     }
-    return h + '</div>';
+    h += '</div><div class="t"><b>' + c.k + ' / ' + c.usable + '</b>cuadro actual<br>en amarillo</div>';
+    return h;
   }
 
   function camTopHTML(slot) {
     const c = camSection(slot);
     return '<button type="button" class="iconbtn" data-act="back" aria-label="Volver">' + ICON.back + '</button>' +
-      '<div class="mid"><b>' + esc(c.title) + '</b><span>' + esc(c.sub) + '</span></div>' + stripPips(slot);
+      '<div class="mid"><b>' + esc(c.title) + '</b><span>' + esc(c.sub) + '</span></div>';
   }
 
   function updateStrip() {
-    const el = $('#camtop');
+    const el = $('#camtop'), bd = $('#gband');
     if (el && S.cam) el.innerHTML = camTopHTML(S.cam.slot);
+    if (bd && S.cam) bd.innerHTML = bandHTML(S.cam.slot);
   }
 
   function autoOn() { try { return localStorage.getItem('marcas_auto') === '1'; } catch (e) { return false; } }
@@ -252,12 +259,13 @@
     const slot = S.cam && S.cam.slot;
     return '<div class="camscreen">' +
       '<div class="camtop" id="camtop">' + camTopHTML(slot) + '</div>' +
+      '<div class="gband" id="gband">' + bandHTML(slot) + '</div>' +
       '<div class="viewfinder"><video id="vid" autoplay playsinline muted></video>' +
       '<div class="roi" id="roi"></div>' +
       '<div class="chips" id="chips"></div>' +
       '<button type="button" class="autosw" id="autosw" role="switch" aria-checked="' + (autoOn() ? 'true' : 'false') + '" data-act="autoToggle"><span>Auto</span><i></i></button>' +
       '<div class="zoombar" id="zoombar" hidden></div>' +
-      '<div class="camhint" id="camhint">Alejá el celular unos 15 cm. La marca no tiene que llenar el cuadro</div>' +
+      '<div class="camhint" id="camhint">Alejá ~15 cm · la marca no tiene que llenar el cuadro</div>' +
       '<div class="camerr" id="camerr" hidden></div></div>' +
       '<div class="camctl">' +
       '<button type="button" class="sm" id="torchbtn" data-act="torch" aria-label="Linterna" hidden>' + ICON.flash + '</button>' +
@@ -430,6 +438,7 @@
       c.width = Math.max(16, Math.round(roi.w * s)); c.height = Math.max(16, Math.round(roi.h * s));
       c.getContext('2d').drawImage(v, roi.x, roi.y, roi.w, roi.h, 0, 0, c.width, c.height);
       const q = Engine.liveQuality(c);
+      freeCanvas(c);
       const list = MSG_LIVE[q.state] || MSG_LIVE.ok;
       const warn = q.state !== 'ok';
       chips.innerHTML = list.map((t) => '<span class="chip' + (warn ? ' warn' : '') + '">' + t + '</span>').join('');
@@ -449,7 +458,7 @@
     const v = $('#vid');
     if (!v || !v.videoWidth || !S.cam || !S.cam.stream) { toast('La cámara todavía no está lista'); return; }
     const roi = roiFromView();
-    const s = Math.min(1, 2400 / Math.max(v.videoWidth, v.videoHeight));
+    const s = Math.min(1, FRAME_MAX / Math.max(v.videoWidth, v.videoHeight));
     const c = document.createElement('canvas');
     c.width = Math.round(v.videoWidth * s); c.height = Math.round(v.videoHeight * s);
     c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
@@ -466,7 +475,7 @@
     busy('Abriendo la foto…');
     await nextPaint();
     try {
-      const c = await fileToCanvas(file, 2400);
+      const c = await fileToCanvas(file, FRAME_MAX);
       const w = c.width, h = c.height;
       const bw = w * 0.9, bh = h * 0.9;
       const rev = {
@@ -494,6 +503,7 @@
     crop.getContext('2d').drawImage(rev.frameCanvas, roi.x, roi.y, roi.w, roi.h, 0, 0, crop.width, crop.height);
     rev.cropURL = crop.toDataURL('image/jpeg', 0.85);
     rev.result = Engine.analyze(crop, { keepDots: rev.keepDots });
+    freeCanvas(crop);
   }
 
   async function beginReview(rev) {
@@ -658,8 +668,36 @@
   /* ----- flujo continuo: revisión rápida sobre la cámara ----- */
 
   function enqueue(fn) {
-    S.saveQ = S.saveQ.then(fn).catch((e) => toast('No se pudo guardar: ' + (e && e.message ? e.message : e)));
+    S.saveQ = S.saveQ.then(async () => {
+      try { await fn(); }
+      catch (e1) { await new Promise((r) => setTimeout(r, 500)); await fn(); }
+    }).catch((e) => saveFailed(e));
     return S.saveQ;
+  }
+
+  function saveFailed(e) {
+    S.saveErrors = (S.saveErrors || 0) + 1;
+    if ($('#saveerr')) return;
+    const d = document.createElement('div');
+    d.id = 'saveerr'; d.className = 'saveerr'; d.setAttribute('role', 'alertdialog');
+    d.innerHTML = '<div class="box"><b>No se pudo guardar una marca</b>' +
+      '<p>Puede que no quede espacio en el teléfono. Liberá espacio y repetí la última foto. Lo cargado antes sigue guardado.</p>' +
+      '<small>' + esc(e && e.message ? e.message : String(e || '')) + '</small>' +
+      '<button type="button" class="btn primary" data-act="saveErrOk">Entendido</button></div>';
+    document.body.appendChild(d);
+  }
+
+  // cada cierto número de fotos, guarda todo y recarga la cámara para soltar la memoria
+  async function maybeRestart() {
+    if (S.restarting || (S.photos || 0) < RESTART_EVERY || S.saveErrors) return;
+    if (S.screen !== 'camera' || $('#qsheet') || $('#crop') || S.rev || !S.guide) return;
+    S.restarting = true;
+    busy('Guardando y reiniciando la cámara…');
+    try { await S.saveQ; } catch (e) { /* nada */ }
+    if (S.saveErrors) { unbusy(); S.restarting = false; return; }
+    try { sessionStorage.setItem('marcas_resume', S.guide.id); } catch (e) { /* nada */ }
+    stopCamera();
+    location.reload();
   }
 
   function qualityOk(q) { return !!q && !q.blur && !q.dark && !q.over && !q.lowContrast; }
@@ -667,6 +705,7 @@
   async function beginQuick(rev) {
     rev.quick = true;
     S.rev = rev;
+    S.photos = (S.photos || 0) + 1;
     busy('Procesando la marca…');
     await nextPaint();
     try {
@@ -739,7 +778,7 @@
     const vf = $('.viewfinder'); if (vf) vf.classList.remove('dim');
   }
 
-  function discardQuick() { S.rev = null; closePanelDom(); }
+  function discardQuick() { if (S.rev) freeCanvas(S.rev.frameCanvas); S.rev = null; closePanelDom(); setTimeout(maybeRestart, 50); }
 
   function showBanner(title, text) {
     const cam = $('.camscreen');
@@ -778,6 +817,7 @@
       quality: rev.result.quality
     };
     const blob = rev.frameBlob;
+    freeCanvas(rev.frameCanvas);
     const old = L.getSlot(g, slot);
     L.setSlot(g, slot, id);
     S.marks[id] = mark;
@@ -810,6 +850,7 @@
     }
     S.cam.slot = next;
     updateStrip();
+    setTimeout(maybeRestart, 700);
     if (full) {
       const usable = isF ? L.FRENTE_USABLE : L.ANEXO_CELLS;
       showBanner(secName + ' listo', usable + ' de ' + usable + ' marcas cargadas. Pasamos al ' + L.pageTitle(g, next.page) + '.');
@@ -837,7 +878,7 @@
 
   /* ----- ajustar recorte ----- */
 
-  function closeCrop() { const c = $('#crop'); if (c) c.remove(); }
+  function closeCrop() { const c = $('#crop'); if (c) { c.querySelectorAll('canvas').forEach(freeCanvas); c.remove(); } }
 
   function openCrop(fromFile) {
     const rev = S.rev;
@@ -913,7 +954,7 @@
       if (!b) return;
       if (b.dataset.c === 'cancel') {
         closeCrop();
-        if (fromFile) { S.rev = null; if (S.screen !== 'camera') render(); }
+        if (fromFile) { if (S.rev) freeCanvas(S.rev.frameCanvas); S.rev = null; if (S.screen !== 'camera') render(); }
         return;
       }
       rev.roi = { x: r.x, y: r.y, w: r.w, h: r.h };
@@ -1335,6 +1376,7 @@
     },
     pen(el) { onPen(parseInt(el.value, 10)); },
     bsize(el) { onBoxSize(parseInt(el.value, 10)); },
+    saveErrOk() { const d = $('#saveerr'); if (d) d.remove(); },
     qAccept() { commitQuick(false); },
     qRetake() { discardQuick(); },
     qSet(el) {
@@ -1452,7 +1494,10 @@
     } catch (e) {
       toast('No se pudo abrir el almacenamiento del teléfono');
     }
-    render();
+    let resume = null;
+    try { resume = sessionStorage.getItem('marcas_resume'); sessionStorage.removeItem('marcas_resume'); } catch (e) { resume = null; }
+    if (resume && S.guides.some((x) => x.id === resume)) await actions.continueGuide({ dataset: { id: resume } });
+    else render();
     const cap = window.Capacitor;
     if (isNative() && cap.Plugins && cap.Plugins.App && cap.Plugins.App.addListener) {
       cap.Plugins.App.addListener('backButton', () => {
