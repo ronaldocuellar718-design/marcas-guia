@@ -3,7 +3,7 @@
   'use strict';
 
   const L = window.Layout;
-  const APP_VERSION = 'v5';
+  const APP_VERSION = 'v6';
   const FRAME_MAX = 1600;        // lado mayor de la foto de trabajo (ahorra memoria)
   const RESTART_EVERY = 50;      // fotos seguidas antes de reiniciar la cámara solo
   function freeCanvas(c) { if (c) { try { c.width = 0; c.height = 0; } catch (e) { /* nada */ } } }
@@ -198,7 +198,7 @@
       }).join('');
     }
     return '<main class="screen">' +
-      '<div><div class="eyebrow">Grupo Piveta</div><h1 class="home-title">Marcas para guía</h1></div>' +
+      '<div class="home-head"><img class="home-logo" src="icons/logo-soporte-ganadero.png" alt="Soporte Ganadero"><h1 class="home-title">Marcas para guía</h1></div>' +
       '<div class="label">En proceso</div>' + list +
       '<div class="spacer"></div>' +
       '<button type="button" class="btn primary big" data-act="newGuide">' + ICON.camera + 'Nueva guía</button>' +

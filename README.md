@@ -2,7 +2,7 @@
 
 App independiente (no tiene relación con ningún otro sistema). Funciona sin internet y sin cuenta: todo queda guardado en el teléfono.
 
-**Qué hace:** sacás una foto de cada marca con la cámara, la app la recorta, la limpia, le pone el mismo grosor de trazo y el mismo tamaño máximo, y la ubica en el siguiente cuadro del Frente o del Anexo. Al final generás el PDF (hoja oficio 612 × 1008 pt, igual al modelo) con o sin las líneas de los cuadros. Podés copiar hojas las veces que necesites.
+**Qué hace:** sacás una foto de cada marca con la cámara, la app la recorta, la limpia, le pone el mismo grosor de trazo y el mismo tamaño máximo, y la ubica en el siguiente cuadro del Frente o del Anexo. Todas las marcas ocupan el mismo recuadro máximo (67 × 59,5 pt, la medida de la marca dominante del modelo) y el mismo grosor de trazo (2,55 pt). Al final generás el PDF (hoja oficio 612 × 1008 pt, igual al modelo) con o sin las líneas de los cuadros. Podés copiar hojas las veces que necesites.
 
 ---
 
@@ -33,15 +33,25 @@ El APK se arma solo en GitHub, no necesitás programas en tu computadora.
 
 Si en el paso 5 aparece una cruz roja, abrí la ejecución, copiá el mensaje del error y mandámelo.
 
+## Actualizar la app (cuando hay una versión nueva)
+
+1. Descomprimí el ZIP nuevo.
+2. En tu repositorio tocá **Add file → Upload files**.
+3. Arrastrá **la carpeta `docs`** completa (y `extras`, `package.json`, `capacitor.config.json` si querés). GitHub reemplaza los archivos que tienen el mismo nombre.
+4. Tocá **Commit changes** y esperá 1 o 2 minutos.
+5. En el celular abrí la app: busca sola la versión nueva y se recarga al estar en la pantalla de inicio (si estabas trabajando, te avisa y se aplica al volver al inicio). Abajo en el inicio dice la versión que tenés, por ejemplo «Versión v3». No hace falta borrar el caché. No borres los «datos del sitio»: eso borra las guías guardadas.
+
+Las guías y las marcas ya guardadas en el teléfono se conservan al actualizar. Las guías viejas conservan su grosor anterior; las nuevas arrancan en 2,55 pt.
+
 ## Cómo se usa
 
 1. **Nueva guía** → poné el nombre y la cantidad de marcas (por ejemplo 62).
-2. Encuadrá la marca dentro del cuadro verde y tocá el botón redondo. También podés elegir una foto de la galería (botón izquierdo) o usar la cámara del teléfono (botón derecho). Con la galería se abre primero **Ajustar recorte**.
-3. En **Revisar**: mirás el resultado, ajustás el grosor del trazo (vale para todas las marcas), activás **Conservar punto suelto** si la marca tiene puntos, o tocás **Ajustar recorte**. Después **Aceptar y sacar la siguiente**.
+2. Con el celular a unos 15 cm, poné la marca dentro del cuadro verde (no tiene que llenarlo). Si hace falta acercar, usá los botones de zoom (1×, 2×…) o juntá los dedos sobre la imagen. Después tocá el botón redondo. También podés elegir una foto de la galería (botón izquierdo) o usar la cámara del teléfono (botón derecho). Con la galería se abre primero **Ajustar recorte**.
+3. En **Revisar**: mirás el resultado, ajustás el grosor del trazo (vale para todas las marcas), activás **Conservar punto suelto** si la marca tiene puntos, o tocás **Ajustar recorte**. Abajo ves en qué cuadro cae la marca y cuántos llevás usados. Después **Aceptar y sacar la siguiente**.
 4. Se llena primero el Frente (cuadros 2 al 6; el cuadro 1 queda vacío para la marca dominante) y después el Anexo 1, Anexo 2, etc. Cada anexo tiene 40 cuadros. Las hojas de anexo se agregan solas según la cantidad de marcas, y podés **Agregar hoja** o **Quitar hoja**.
 5. En **Documento** tocá cualquier cuadro para revisar, repetir o quitar esa marca.
-6. **Copiar hojas**: elegí una o varias hojas (por ejemplo el Frente), indicá cuántas veces repetirlas y tocá **Copiar hojas**. Las copias son idénticas y se arman después de la última hoja elegida. Ejemplo: Frente ×3 deja 4 frentes iguales; Anexo 1 + Anexo 2 ×3 deja ese par 4 veces.
-7. **Exportar PDF**: elegí **Con líneas** o **Solo marcas**, generá el PDF y tocá **Guardar o compartir**.
+6. **Copiar hojas**: elegí una o varias hojas (por ejemplo el Frente), indicá cuántas veces repetirlas y tocá **Copiar hojas**. Las copias son idénticas y se arman después de la última hoja elegida. Abajo ves todas las hojas que va a tener el PDF y, con **Ver el PDF**, las recorrés deslizando como en un PDF. Ejemplo: Frente ×3 deja 4 frentes iguales; Anexo 1 + Anexo 2 ×3 deja ese par 4 veces.
+7. **Exportar PDF**: elegí **Con líneas** o **Solo marcas**. Si hace falta, ajustá el grosor y el **tamaño de las marcas** (vale para todas). Generá el PDF y tocá **Guardar o compartir**.
 
 ## Consejos para que la foto salga bien
 
@@ -59,3 +69,17 @@ No hay cuenta, ni servidor, ni internet. Las fotos y las marcas se guardan solo 
 - `docs/` — la app (es lo que publica GitHub Pages y lo que se empaqueta en el APK).
 - `extras/build-apk.yml` — copia del flujo que arma el APK.
 - `package.json`, `capacitor.config.json` — configuración del empaquetado Android.
+
+## Flujo continuo (v4)
+
+- En la cámara: foto → panel de revisión sobre la cámara → **Aceptar** → la marca se guarda en segundo plano y la cámara queda lista para la siguiente.
+- Arriba se ve la sección (Frente / Anexo N), "marca k de n" y una mini grilla que se pinta a medida que cargás.
+- Al completar una hoja aparece el aviso ("Frente listo") y se pasa solo a la siguiente. Al llegar a la meta se abre el documento.
+- **Ajustes** dentro del panel: grosor, punto suelto y "Ajustar recorte".
+- **Auto** (apagado por defecto): acepta solo si la foto es nítida y se detectó la marca; muestra **Deshacer** unos segundos.
+
+## Novedades v5
+
+- Pantalla de cámara ordenada: grilla grande de avance en su propia franja con el contador, "Auto" arriba a la derecha, ayuda en una línea y zoom solo abajo.
+- Memoria: la foto de trabajo es más chica (1600 px) y los lienzos se liberan después de cada marca. Cada 50 fotos seguidas la app guarda todo, recarga la cámara y sigue en el mismo cuadro.
+- Si una marca no se puede guardar (por ejemplo, sin espacio), aparece un aviso rojo que hay que cerrar; se reintenta una vez antes de avisar.
