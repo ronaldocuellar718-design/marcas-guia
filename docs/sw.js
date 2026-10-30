@@ -1,7 +1,7 @@
 /* Marcas para guía - funciona sin internet una vez abierta la primera vez */
-const CACHE = 'marcas-guia-v6';
+const CACHE = 'marcas-guia-v7';
 const FILES = [
-  './', './index.html', './styles.css', './app.js', './engine.js', './layout.js', './db.js', './pdfexport.js',
+  './', './index.html', './styles.css', './app.js', './engine.js', './layout.js', './db.js', './pdfexport.js', './licencia.js', './licencia-config.js',
   './lib/pdf-lib.min.js', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png', './icons/logo-soporte-ganadero.png',
   './fonts/barlow-latin-400-normal.woff2', './fonts/barlow-latin-500-normal.woff2', './fonts/barlow-latin-600-normal.woff2',
   './fonts/barlow-condensed-latin-600-normal.woff2', './fonts/barlow-condensed-latin-700-normal.woff2'

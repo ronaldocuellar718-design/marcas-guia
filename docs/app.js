@@ -3,7 +3,7 @@
   'use strict';
 
   const L = window.Layout;
-  const APP_VERSION = 'v6';
+  const APP_VERSION = 'v7';
   const FRAME_MAX = 1600;        // lado mayor de la foto de trabajo (ahorra memoria)
   const RESTART_EVERY = 50;      // fotos seguidas antes de reiniciar la cámara solo
   function freeCanvas(c) { if (c) { try { c.width = 0; c.height = 0; } catch (e) { /* nada */ } } }

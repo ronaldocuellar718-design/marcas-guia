@@ -1,4 +1,4 @@
-/* Marcas para guía - almacenamiento local (IndexedDB). Nada se sube a ningún servidor. */
+/* Marcas para guía - almacenamiento local (IndexedDB). Los datos de trabajo se quedan en el teléfono; al servidor solo van la cuenta y la licencia. */
 (function (global) {
   'use strict';
 
